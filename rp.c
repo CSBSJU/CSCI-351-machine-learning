@@ -172,53 +172,81 @@ main(int argc, char * argv[])
     assert(MPI_SUCCESS == ret);
   }
 
-#if 0
   /* Allocate more memory. */
-  struct distance_metric * const distance = calloc(n, sizeof(*distance));
+  double * distance;
+ 
+  if (0 == rank) {
+    distance = calloc(n, sizeof(*distance));
+  } else {
+    distance = calloc(ln, sizeof(*distance));
+  }
 
   /* Check for success. */
   assert(distance);
 
   /* Compute distances. */
-  for (size_t i = 0; i < n; i++) {
-    distance[i].viewer_id = i;
+  for (size_t i = 0; i < ln; i++) {
     for (size_t j = 0; j < m - 1; j++) {
-      distance[i].distance += fabs(urating[j] - rating[i * m + j]);
+      distance[i] += fabs(urating[j] - rating[i * m + j]);
     }
   }
 
-  /* Sort distances. */
-  qsort(distance, n, sizeof(*distance), cmp);
-
-  /* Get user input. */
-  printf("Enter the number of similar viewers to report: ");
-  scanf("%zu", &k);
-
-  /* Output k viewers who are least different from the user. */
-  printf("Viewer ID   Movie five   Distance\n");
-  printf("---------------------------------\n");
-
-  for (size_t i = 0; i < k; i++) {
-    printf("%9zu   %10.1lf   %8.1lf\n", distance[i].viewer_id + 1,
-      rating[distance[i].viewer_id * m + 4], distance[i].distance);
+  if (0 == rank) {
+    for (int r = 1; r < p; r++) {
+      size_t const rn = (r + 1) * base > n ? n - r * base : base;
+      ret = MPI_Recv(distance + r * base, rn, MPI_DOUBLE, r, 0,
+        MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      assert(MPI_SUCCESS == ret);
+    }
+  } else {
+    ret = MPI_Send(distance, ln, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+    assert(MPI_SUCCESS == ret);
   }
 
-  printf("---------------------------------\n");
+  if (0 == rank) {
+    struct distance_metric * distance2 = malloc(n * sizeof(*distance2));
+    assert(distance2);
 
-  /* Compute the average to make the prediction. */
-  double sum = 0.0;
-  for (size_t i = 0; i < k; i++) {
-    sum += rating[distance[i].viewer_id * m + 4];
+    for (size_t i = 0; i < n; i++) {
+      distance2[i].viewer_id = i;
+      distance2[i].distance = distance[i];
+    }
+
+    /* Sort distances. */
+    qsort(distance2, n, sizeof(*distance2), cmp);
+
+    /* Get user input. */
+    printf("Enter the number of similar viewers to report: ");
+    fflush(stdout);
+    scanf("%zu", &k);
+
+    /* Output k viewers who are least different from the user. */
+    printf("Viewer ID   Movie five   Distance\n");
+    printf("---------------------------------\n");
+
+    for (size_t i = 0; i < k; i++) {
+      printf("%9zu   %10.1lf   %8.1lf\n", distance2[i].viewer_id + 1,
+        rating[distance2[i].viewer_id * m + 4], distance2[i].distance);
+    }
+
+    printf("---------------------------------\n");
+
+    /* Compute the average to make the prediction. */
+    double sum = 0.0;
+    for (size_t i = 0; i < k; i++) {
+      sum += rating[distance2[i].viewer_id * m + 4];
+    }
+
+    /* Output prediction. */
+    printf("The predicted rating for movie five is %.1lf.\n", sum / k);
+
+    free(distance2);
   }
-
-  /* Output prediction. */
-  printf("The predicted rating for movie five is %.1lf.\n", sum / k);
-#endif
 
   /* Deallocate memory. */
   free(rating);
   free(urating);
-  //free(distance);
+  free(distance);
 
   ret = MPI_Finalize();
   assert(MPI_SUCCESS == ret);
